@@ -1,0 +1,23 @@
+name: Workflow feedback
+description: Share a real workflow and the result you need.
+title: "[Feedback] "
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Current workflow
+      description: Describe the task, the tools you use, and the step that takes the most effort.
+    validations:
+      required: true
+  - type: textarea
+    id: desired
+    attributes:
+      label: Desired result
+      description: What output would let you finish the task?
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Sanitized example
+      description: Optional small synthetic example. Remove credentials, private URLs, customer data, and personal documents.
