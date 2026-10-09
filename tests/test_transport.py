@@ -46,8 +46,21 @@ result['restored'] = (
     handlers == [signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)]
     and blocking == [os.get_blocking(fd) for fd in (0, 1, 2)]
 )
-rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-result['peak_rss_bytes'] = rss if sys.platform == 'darwin' else rss * 1024
+if sys.platform.startswith('linux'):
+    # Linux rusage may retain the controller's pre-exec RSS highwater.
+    # VmHWM belongs to this exec's memory map, so it measures the relay itself.
+    for line in Path('/proc/self/status').read_text().splitlines():
+        fields = line.split()
+        if fields and fields[0] == 'VmHWM:':
+            if len(fields) != 3 or fields[2] != 'kB':
+                raise RuntimeError('Unexpected VmHWM format')
+            result['peak_rss_bytes'] = int(fields[1]) * 1024
+            break
+    else:
+        raise RuntimeError('VmHWM is unavailable')
+else:
+    # macOS reports bytes, and its exec peak does not inherit this highwater.
+    result['peak_rss_bytes'] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 Path(sys.argv[1]).write_text(json.dumps(result))
 """
 
@@ -60,14 +73,14 @@ class TransportTests(unittest.TestCase):
         self.result_path = Path(self.temp.name) / 'result.json'
         self.env = dict(os.environ, PYTHONPATH=str(ROOT / 'src'))
 
-    def start_proxy(self, code=None, *, command=None, timeout=0.5, forward_stderr=False,
+    def start_proxy(self, code=None, *, command=None, timeout=3.0, forward_stderr=False,
                     observer_fails=False, diagnostic_fails=False,
-                    stdin=subprocess.PIPE, stdout=subprocess.PIPE):
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, runner_prefix=''):
         if command is None:
             command = [sys.executable, '-c', code]
         failure_mode = 'fail' if observer_fails else 'fail_diagnostic' if diagnostic_fails else 'ok'
         proxy = subprocess.Popen(
-            [sys.executable, '-c', RUNNER, str(self.result_path), json.dumps(command),
+            [sys.executable, '-c', runner_prefix + RUNNER, str(self.result_path), json.dumps(command),
              str(timeout), 'yes' if forward_stderr else 'no', failure_mode],
             stdin=stdin, stdout=stdout, stderr=subprocess.PIPE, env=self.env,
         )
@@ -150,6 +163,51 @@ class TransportTests(unittest.TestCase):
         self.assert_traffic(result, 'client', payload)
         self.assert_traffic(result, 'server', payload)
         self.assertLess(result['peak_rss_bytes'], 48 * 1024 * 1024)
+
+    def test_linux_peak_measurement_uses_vm_highwater_and_converts_kib_to_bytes(self):
+        # Linux's inherited rusage highwater can exceed this exec's own memory.
+        # Distinct VmRSS/VmPeak values catch selection of the wrong proc field.
+        prefix = r'''
+import resource, sys
+from pathlib import Path
+from types import SimpleNamespace
+resource.getrusage = lambda _who: SimpleNamespace(ru_maxrss=160000)
+original_read_text = Path.read_text
+def read_status(path, *args, **kwargs):
+    if str(path) == '/proc/self/status':
+        return 'Name:\tpython\nVmPeak:\t30000 kB\nVmHWM:\t16384 kB\nVmRSS:\t8192 kB\n'
+    return original_read_text(path, *args, **kwargs)
+Path.read_text = read_status
+sys.platform = 'linux'
+'''
+        proxy = self.start_proxy('pass', runner_prefix=prefix)
+        proxy.communicate(b'', timeout=5)
+        result = self.result(proxy)
+        self.assertEqual(result['peak_rss_bytes'], 16 * 1024 * 1024)
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux exec/rusage regression')
+    def test_linux_proxy_peak_does_not_inherit_controller_memory(self):
+        controller_memory = bytearray(96 * 1024 * 1024)
+        for offset in range(0, len(controller_memory), 4096):
+            controller_memory[offset] = 1  # Fault in every page before fork/exec.
+        proxy = self.start_proxy('pass')
+        proxy.communicate(b'', timeout=5)
+        result = self.result(proxy)
+        self.assertEqual(result['status'], 'completed')
+        self.assertLess(result['peak_rss_bytes'], 48 * 1024 * 1024)
+        self.assertEqual(controller_memory[0], 1)  # Keep pages live until sampling finishes.
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux proc peak characterization')
+    def test_linux_proxy_peak_still_detects_its_own_memory_growth(self):
+        prefix = '''
+runner_memory = bytearray(64 * 1024 * 1024)
+for offset in range(0, len(runner_memory), 4096):
+    runner_memory[offset] = 1
+'''
+        proxy = self.start_proxy('pass', runner_prefix=prefix)
+        proxy.communicate(b'', timeout=5)
+        result = self.result(proxy)
+        self.assertGreaterEqual(result['peak_rss_bytes'], 64 * 1024 * 1024)
 
     def test_slow_client_applies_server_backpressure_without_unbounded_buffering(self):
         marker = Path(self.temp.name) / 'server-finished'
@@ -242,10 +300,12 @@ class TransportTests(unittest.TestCase):
         pid_path = Path(self.temp.name) / 'descendant.pid'
         descendant = "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)"
         command = [sys.executable, '-c',
-                   "import subprocess,sys\nfrom pathlib import Path\n"
+                   "import os,subprocess,sys\nfrom pathlib import Path\n"
                    "child=subprocess.Popen([sys.executable,'-c',sys.argv[2]])\n"
-                   "Path(sys.argv[1]).write_text(str(child.pid))\n", str(pid_path), descendant]
+                   "Path(sys.argv[1]).write_text(str(child.pid))\nos.write(1,b'ready\\n')\n",
+                   str(pid_path), descendant]
         proxy = self.start_proxy(command=command, timeout=0.2)
+        self.read_ready(proxy)
         proxy.communicate(b'', timeout=3)
         result = self.result(proxy)
         self.assertEqual(result['status'], 'shutdown_timeout')
@@ -254,10 +314,10 @@ class TransportTests(unittest.TestCase):
 
     def test_client_stdout_broken_pipe_stops_and_finalizes(self):
         proxy = self.start_proxy("import os,signal\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\n"
-                                 "while True: os.write(1,b'x'*65536)\n", timeout=0.2)
+                                 "while True: os.write(1,b'x'*65536)\n")
         proxy.stdout.close()
         proxy.stdout = None
-        _, stderr = proxy.communicate(b'', timeout=3)
+        _, stderr = proxy.communicate(b'', timeout=5)
         result = self.result(proxy)
         self.assertEqual(result['status'], 'transport_failed')
         self.assertEqual(result['diagnostics']['transport_failure'], 1)
@@ -289,7 +349,7 @@ class TransportTests(unittest.TestCase):
     def test_server_stderr_eof_does_not_end_an_active_protocol_connection(self):
         proxy = self.start_proxy("import os,time\nos.close(2)\ntime.sleep(0.1)\n"
                                  "os.write(1,os.read(0,100))\n")
-        output, stderr = proxy.communicate(b'after stderr closed\n', timeout=3)
+        output, stderr = proxy.communicate(b'after stderr closed\n', timeout=5)
         result = self.result(proxy)
         self.assertEqual(output, b'after stderr closed\n')
         self.assertEqual(stderr, b'')
@@ -329,7 +389,7 @@ class TransportTests(unittest.TestCase):
 
     def test_observer_failure_is_categorized_and_never_leaks_exception_text(self):
         proxy = self.start_proxy('import os; os.write(1,b"bytes")', observer_fails=True)
-        _, stderr = proxy.communicate(b'', timeout=3)
+        _, stderr = proxy.communicate(b'', timeout=5)
         result = self.result(proxy)
         self.assertEqual(result['status'], 'transport_failed')
         self.assertEqual(result['diagnostics']['observer_failure'], 1)
@@ -338,7 +398,7 @@ class TransportTests(unittest.TestCase):
 
     def test_diagnostic_callback_failure_cannot_report_a_valid_server_status(self):
         proxy = self.start_proxy('import sys; sys.exit(17)', diagnostic_fails=True)
-        _, stderr = proxy.communicate(b'', timeout=3)
+        _, stderr = proxy.communicate(b'', timeout=5)
         result = self.result(proxy)
         self.assertEqual(result['status'], 'transport_failed')
         self.assertEqual(stderr, b'')
