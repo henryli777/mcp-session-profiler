@@ -1,36 +1,30 @@
 # Contributing
 
-**Status: Planning — no executable release yet.** Contributions currently help refine the measurement contract, compatibility workflow, privacy defaults, and acceptance criteria. All implementation described in this repository is planned.
+Start with a reproducible symptom in one stdio MCP connection. Include client/server versions, negotiated protocol, OS/Python, expected behavior and observed metadata. Keep facts separate from inferences: response bytes do not establish model context or billing.
 
-## Useful contributions now
+## Develop and validate
 
-- A reproducible problem where knowing actual call counts, response latency, categorized errors, or response bytes would help.
-- Corrections to JSON-RPC/MCP assumptions, with the relevant protocol version and source.
-- A proposal for the first supported client/version and a deterministic stdio workflow.
-- Reviews of [MVP](docs/MVP.md), [ROADMAP](ROADMAP.md), and the English/Chinese README pair.
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e .
+python -m unittest discover -s tests -v
+python examples/demo.py --output-dir /tmp/mcp-demo-new
+```
 
-Please describe the observable fact separately from an inference. A schema count is not proof of model context, and response bytes are not a billing measurement. Historical client issues need a version-specific reproduction before they become claims about current behavior.
+Optional real SDK check:
 
-## Reporting a proposed workflow
+```sh
+python -m pip install 'mcp==2.3.0'
+python examples/sdk_check.py --output /tmp/mcp-sdk-new.json
+```
 
-Include the client/version, server/version, MCP protocol version, operating system, and Python version if known. Explain the task, expected tool behavior, actual symptom, and which metadata would resolve it. Label untested assumptions explicitly.
+Use new output paths. Add meaningful tests for changed protocol, correlation, lifecycle, privacy or metrics behavior. State exact checks run. Keep runtime dependencies in the standard library unless a concrete need warrants a dependency. Keep English/Chinese status and scope aligned.
 
-Prefer a synthetic fixture or a short sanitized reproduction. Do not publish real tool arguments, result bodies, credentials, environment values, private paths, raw stderr, or client configuration containing secrets. Tool names and request IDs may also need sanitizing. Obtain the owner's permission before sharing somebody else's session evidence.
+## Privacy and review
 
-## Changes and review
+Use synthetic fixtures. Do not publish actual parameters, results, credentials, environment values, private paths or raw stderr. Tool names/IDs may need sanitizing too. Report artifacts must stay metadata-only. Do not add hosted telemetry, automatic client edits or message-body capture to this release.
 
-Keep scope aligned with one stdio workflow and local reports. Explain the problem, the proposed behavior, and its acceptance criteria before introducing another transport, client, dependency, or data-capture option. Discuss work through repository issues or pull requests; this document does not claim any have been created yet.
+Pull requests should explain the problem, final behavior, validation and material limits. New transports/clients need version-specific evidence and their own measurement contract. Historical issues do not prove current client behavior. Never invent benchmarks, compatibility, test results or savings.
 
-For documentation changes, check that links resolve, English and Chinese status/scope agree, and planned features remain labeled. Avoid invented installation commands, releases, benchmarks, test results, CI badges, or cost-saving claims.
-
-For future implementation contributions, meaningful checks are expected for protocol forwarding, typed-ID correlation, failure boundaries, privacy defaults, and report consistency. State the exact checks actually run and their results. The current repository provides no test runner, executable CLI, or verified installation path.
-
-## Privacy and dependencies
-
-Default artifacts must remain metadata-only. A proposal to retain message bodies requires an explicit design review and is outside the current MVP. Keep temporary parsing separate from persisted output, and cover disclosure risks in any new output field.
-
-Python 3.11+ with the standard library is the planned baseline. Propose a dependency only when it addresses a defined need, including maintenance and licensing implications. Do not add hosted collection or automatic client-configuration changes within this MVP.
-
-## License
-
-Contributions are intended to be distributed under this repository's MIT license; see [LICENSE](LICENSE).
+Contributions are distributed under the repository's MIT [license](LICENSE).

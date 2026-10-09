@@ -3,6 +3,11 @@ description: Share a real workflow and the result you need.
 title: "[Feedback] "
 body:
   - type: textarea
+    id: versions
+    attributes:
+      label: Versions and observation status
+      description: Client, server, negotiated MCP protocol, Python, OS, profiler version and report status/coverage. Omit private paths and configuration secrets.
+  - type: textarea
     id: workflow
     attributes:
       label: Current workflow

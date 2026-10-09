@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "profiler_version": "0.1.0",
+  "session": {
+    "status": "completed",
+    "server_exit_code": 0,
+    "stderr_bytes": 64,
+    "duration_ms": 137.464792,
+    "python_version": "3.13.7",
+    "platform": "Darwin"
+  },
+  "calls": [
+    {
+      "sequence": 1,
+      "tool": "fast_echo",
+      "request_id": {
+        "type": "number",
+        "value": 3
+      },
+      "origin": "client",
+      "started_ms": 79.11166700068861,
+      "status": "success",
+      "latency_ms": 0.14937500236555934,
+      "response_message_bytes": 148,
+      "error_code": null
+    },
+    {
+      "sequence": 2,
+      "tool": "slow_echo",
+      "request_id": {
+        "type": "number",
+        "value": 4
+      },
+      "origin": "client",
+      "started_ms": 79.38520799507387,
+      "status": "success",
+      "latency_ms": 32.202750007854775,
+      "response_message_bytes": 144,
+      "error_code": null
+    },
+    {
+      "sequence": 3,
+      "tool": "failing_tool",
+      "request_id": {
+        "type": "number",
+        "value": 5
+      },
+      "origin": "client",
+      "started_ms": 114.17341699416284,
+      "status": "tool_error",
+      "latency_ms": 0.3079160087509081,
+      "response_message_bytes": 158,
+      "error_code": null
+    },
+    {
+      "sequence": 4,
+      "tool": "unknown_tool",
+      "request_id": {
+        "type": "number",
+        "value": 6
+      },
+      "origin": "client",
+      "started_ms": 115.05799999576993,
+      "status": "rpc_error",
+      "latency_ms": 0.18808299500960857,
+      "response_message_bytes": 96,
+      "error_code": -32602
+    }
+  ],
+  "diagnostics": {
+    "stderr_not_forwarded": 64
+  },
+  "coverage": {
+    "complete": true,
+    "limits": {
+      "max_frame_bytes": 1048576,
+      "max_calls": 10000,
+      "max_pending": 20000,
+      "max_metadata_bytes": 256
+    }
+  },
+  "traffic": {
+    "client": {
+      "bytes": 741,
+      "frames": 7
+    },
+    "server": {
+      "bytes": 1289,
+      "frames": 6
+    }
+  },
+  "tool_calls_observed": 4,
+  "summary": {
+    "observed_calls": 4,
+    "retained_calls": 4,
+    "quantile_method": "nearest_rank",
+    "tools": [
+      {
+        "tool": "failing_tool",
+        "calls": 1,
+        "matched": 1,
+        "unresolved": 0,
+        "ambiguous": 0,
+        "rpc_errors": 0,
+        "tool_errors": 1,
+        "response_bytes": 158,
+        "latency": {
+          "samples": 1,
+          "min_ms": 0.3079160087509081,
+          "median_ms": 0.3079160087509081,
+          "p95_ms": 0.3079160087509081,
+          "max_ms": 0.3079160087509081
+        }
+      },
+      {
+        "tool": "fast_echo",
+        "calls": 1,
+        "matched": 1,
+        "unresolved": 0,
+        "ambiguous": 0,
+        "rpc_errors": 0,
+        "tool_errors": 0,
+        "response_bytes": 148,
+        "latency": {
+          "samples": 1,
+          "min_ms": 0.14937500236555934,
+          "median_ms": 0.14937500236555934,
+          "p95_ms": 0.14937500236555934,
+          "max_ms": 0.14937500236555934
+        }
+      },
+      {
+        "tool": "slow_echo",
+        "calls": 1,
+        "matched": 1,
+        "unresolved": 0,
+        "ambiguous": 0,
+        "rpc_errors": 0,
+        "tool_errors": 0,
+        "response_bytes": 144,
+        "latency": {
+          "samples": 1,
+          "min_ms": 32.202750007854775,
+          "median_ms": 32.202750007854775,
+          "p95_ms": 32.202750007854775,
+          "max_ms": 32.202750007854775
+        }
+      },
+      {
+        "tool": "unknown_tool",
+        "calls": 1,
+        "matched": 1,
+        "unresolved": 0,
+        "ambiguous": 0,
+        "rpc_errors": 1,
+        "tool_errors": 0,
+        "response_bytes": 96,
+        "latency": {
+          "samples": 1,
+          "min_ms": 0.18808299500960857,
+          "median_ms": 0.18808299500960857,
+          "p95_ms": 0.18808299500960857,
+          "max_ms": 0.18808299500960857
+        }
+      }
+    ]
+  }
+}

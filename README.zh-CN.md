@@ -2,49 +2,80 @@
 
 [English](README.md)
 
-**状态：Planning（规划中）——尚无可执行版本。** 本仓库目前只有范围说明和验收标准。下文功能均为 planned（计划能力），尚未实现或验证。
+**看清一次 MCP 会话里实际发生了什么。** 将本地 stdio 代理接在一个 MCP 客户端和一个服务之间，查看哪些工具被调用、哪些慢或报告错误，以及响应有多大。
 
-计划提供一个本地分析工具，观测一个客户端与一个 stdio MCP 服务之间的工作流：调用了哪些工具、匹配响应用了多久、哪些调用报告错误，以及响应在观测边界上的字节大小。
+v0.1 为 **Alpha 首版**，支持 macOS / Linux、Python 3.11+。运行时只用 Python 标准库。代理原样转发协议字节，将有限量的元数据写入本地 JSON；离线 HTML 不依赖 JavaScript、外部资源或网络。
 
-## 计划工作流
+![本地真实执行的诊断报告](showcases/local-fixture/report-preview.png)
 
-1. 用户手动将分析工具接入一个 MCP 客户端与一个 stdio 服务之间。
-2. 计划中的观测器转发协议消息并保留元数据，默认不记录调用参数和结果正文。
-3. 计划生成本地 JSON 与 HTML 报告，汇总调用次数、响应延迟、错误类别和响应字节数。
-4. 用户用自己明确选择的配置各运行一次任务，再用两份报告生成计划中的手动 A/B 对比。
+## 跑一次本地演示
 
-拟采用 Python 3.11+ CLI，在适用范围内优先使用标准库。第一个支持的客户端版本与 MCP 协议版本将在兼容性里程碑中选定并记录。实现存在后才会补充安装说明和可执行命令。
+```sh
+git clone https://github.com/henryli777/mcp-session-profiler.git
+cd mcp-session-profiler
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install .
+python examples/demo.py --output-dir /tmp/mcp-profiler-demo
+```
 
-## 计划报告能说明什么
+每次使用**新的输出目录**。演示启动本地 fixture，完成 MCP 初始化、工具发现和快速/延迟/失败工具调用，生成 session.json 和 report.html。见[真实执行的本地案例](showcases/local-fixture/README.md)，也可用浏览器打开自己生成的 HTML。
 
-| 指标 | 计划中的解释 |
+## 接入自己的服务
+
+手动替换 stdio 服务启动命令：
+
+```sh
+mcp-profiler run --output /tmp/mcp-session-001.json -- your-server --your-server-option
+```
+
+客户端连接代理的 stdin/stdout；`--` 后面是服务的程序和参数，不经过 shell。工具不会自动改客户端配置。在客户端配置中使用绝对路径，每次会话指定新的报告路径；已有文件、符号链接和硬链接会在启动服务前被拒绝覆盖。
+
+连接关闭后：
+
+```sh
+mcp-profiler summarize /tmp/mcp-session-001.json
+mcp-profiler html /tmp/mcp-session-001.json --output /tmp/mcp-session-001.html
+```
+
+`run` 的 stdout 仅用于 MCP 协议。服务 stderr 默认读取后丢弃，只保留字节数；`--forward-stderr` 会将原始文本转发到运行时 stderr，可能包含敏感信息。两种模式均不将 stderr 正文存入报告。
+
+## 指标含义
+
+| 指标 | 含义 |
 | --- | --- |
-| 调用频率 | 被接入连接上观测到的 `tools/call` 请求次数 |
-| 响应延迟 | 从观测到请求至匹配响应的本地耗时，包含传输和观测器的影响 |
-| 错误 | 分别统计 JSON-RPC 错误、带 `isError` 的工具结果，以及传输或观测失败 |
-| 响应大小 | 观测边界上响应消息的 UTF-8 字节数，不等于模型上下文 token 数 |
-| A/B 对比 | 两次用户标注运行的差异、样本数量与限制，不证明因果关系 |
+| 调用次数 | 观测到的客户端 `tools/call` 请求；单独显示保留记录数 |
+| 延迟 | 代理观测完整请求帧到匹配响应帧的单调时钟耗时，含代理与传输影响 |
+| 错误 | 分开统计 JSON-RPC 错误与工具的 `isError: true` |
+| 响应字节 | 完整响应 JSON 帧大小，排除换行，包含 JSON 结构 |
+| 数据缺失 | 未完成/关联歧义、观测上限、异常帧和不完整会话 |
 
-Schema 体积、协议流量、token 估算、模型实际上下文和账单是不同的量。stdio 观测不能确认客户端向模型加载了什么，也不能确认供应商如何计费。未来若增加 token 估算，必须说明方法和限制。本项目不承诺精确的费用或上下文节省。
+延迟仅统计成功关联的调用并显示样本数，中位数和 p95 使用 nearest rank。返回结果不等于业务成功。**传输字节不等于 token、模型上下文或账单。** 只观测被接入的一条连接。
 
-## 隐私与范围
+关联区分数字 `1` 和字符串 `"1"`，区分客户端/服务端请求来源，支持乱序响应。重复在途 ID 隔离到会话结束，不分配猜测的延迟。批量 JSON 数组原样转发，但不参与调用归属；非法 JSON、非法 UTF-8、超大帧和截断帧均显示诊断。
 
-计划默认仅保存本地元数据：工具名、保留类型的请求 ID、时间、字节数、结果类别和关联异常。工具名与 ID 本身也可能敏感。调用参数、结果正文和原始诊断文本均不属于计划中的默认产物；观测器需要在内存中临时解析消息，以分类和计算大小。
+默认上限：单帧观测 1 MiB、保留 10,000 次调用、20,000 个在途键、工具名/ID 256 字节，转发队列也有上限。可用 `--max-frame-bytes`、`--max-calls`（1–10,000）、`--max-pending` 调整；报告读取上限为 64 MiB。超大帧在传输可行时继续流式转发，标记观测不完整。无法分类的帧会将当前调用标记为歧义，并停止本次会话的后续关联；此前已完成的样本仍有效，后续可识别调用记为未完成。在途键上限耗尽后，本次会话不再接纳新关联键。
 
-MVP 不会自动修改客户端配置、禁用工具或向托管服务上传报告。配置调整和报告分享由用户控制。
+客户端输入 EOF 后，服务默认有 3 秒完成响应（`--shutdown-timeout`，0.05–60 秒），慢调用需提高此值。中断或强制退出会清理服务进程组。代理会影响时序，不能保证适配每个客户端的退出行为。
 
-## 为什么做这个项目
+## 隐私
 
-[mcp-tokens](https://github.com/sd2k/mcp-tokens) 与 [mcp-token-audit](https://github.com/michaeltuszynski/mcp-token-audit) 等项目已有静态工具 schema 统计能力。本项目计划聚焦一次实际会话的元数据，以及用户手动运行后的比较。
+仅保存工具名、保留类型的请求 ID、时间、字节数、数字错误码、结果分类、平台/Python 版本和固定诊断类别。参数/结果正文、错误消息/data、启动参数、环境变量和原始 stderr 均不保存；消息会在内存中临时解析。**工具名和 ID 本身也可能敏感**，分享前请检查。报告文件权限为 `0600`，无遥测和上传。
 
-[Claude Code issue #29995](https://github.com/anthropics/claude-code/issues/29995) 是 2026 年 3 月的用户报告：诊断将按需加载工具的完整 schema 纳入统计。研究快照记录其状态为 **Closed as not planned**。这条历史报告不能说明当前客户端版本仍有同样行为；兼容性工作需要验证选定版本。
+## 验证与开发
 
-## 规划文档
+[验证记录](docs/VALIDATION.md)说明官方 Python SDK 工作流、具体版本和实际协议；不代表已验证 Claude Code 或 Codex 客户端。
 
-- [MVP 范围与指标约定](docs/MVP.md)
-- [里程碑与验收标准](ROADMAP.md)
-- [贡献指南](CONTRIBUTING.md)
+```sh
+python -m unittest discover -s tests -v
+python -m pip install 'mcp==2.3.0'  # 仅供兼容性验证，运行时不需要
+python examples/sdk_check.py --output /tmp/mcp-profiler-sdk-check.json
+```
 
-## 许可证
+退出码：`0` 完整观测且保留调用无未完成/歧义；`1` 服务失败；`2` 输入/输出/报告失败；`3` 传输/代理失败；`4` 观测不完整或调用未完成/有歧义；`124` 退出超时；`130` 中断。可行时保存部分报告，写报告失败在 stderr 显示并返回 `2`。
+
+HTTP/SSE、Windows、自动客户端配置、A/B 对比、token 估算和自动调优尚未实现。见[指标约定](docs/MVP.md)、[路线图](ROADMAP.md)、[贡献说明](CONTRIBUTING.md)。
+
+[mcp-tokens](https://github.com/sd2k/mcp-tokens) 和 [mcp-token-audit](https://github.com/michaeltuszynski/mcp-token-audit) 已提供静态 schema 统计，本项目聚焦**真实会话**。初始调研中的历史 [Claude Code issue #29995](https://github.com/anthropics/claude-code/issues/29995) 不证明当前客户端行为或节省效果。
 
 MIT，见 [LICENSE](LICENSE)。

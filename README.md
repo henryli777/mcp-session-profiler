@@ -2,49 +2,80 @@
 
 [简体中文](README.zh-CN.md)
 
-**Status: Planning — no executable release yet.** This repository contains the proposed scope and acceptance criteria. The features below are planned, not implemented or verified.
+**Local diagnostics for actual MCP tool calls.** Put a stdio proxy between one MCP client and one server, then inspect which tools ran, which were slow or reported errors, and how large their responses were.
 
-A planned local profiler for one client's stdio MCP workflow. It aims to show which tools were called, how long matching responses took, which calls reported errors, and how large responses were on the observed transport.
+v0.1 is an **alpha** for macOS and Linux, Python 3.11+. Its runtime uses only the Python standard library. It forwards protocol bytes unchanged and saves bounded local metadata. Offline HTML reports need no JavaScript, external assets, or network connection.
 
-## Planned workflow
+![Executed local fixture report](showcases/local-fixture/report-preview.png)
 
-1. A user manually places the profiler between one MCP client and one stdio server.
-2. The planned observer forwards protocol traffic and retains metadata, without recording argument or result bodies by default.
-3. Planned local JSON and HTML reports summarize tool-call frequency, response latency, error categories, and response bytes.
-4. A user runs a task twice with explicitly chosen configurations, then creates a planned A/B comparison from the two reports.
+## Try the local demo
 
-The proposed implementation is a Python 3.11+ CLI, using the standard library where practical. The first client/version and supported MCP protocol version will be selected and documented through the compatibility milestone. Installation instructions and executable commands will be added only after an implementation exists.
+```sh
+git clone https://github.com/henryli777/mcp-session-profiler.git
+cd mcp-session-profiler
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install .
+python examples/demo.py --output-dir /tmp/mcp-profiler-demo
+```
 
-## What the planned reports can establish
+Choose a **new** output directory each time. The demo starts a local fixture, initializes MCP, discovers tools, calls fast/delayed/failing tools, and generates session.json and report.html. See the [executed local showcase](showcases/local-fixture/README.md) or open the generated HTML.
 
-| Metric | Planned interpretation |
+## Profile your server
+
+Manually replace your stdio server launcher with:
+
+```sh
+mcp-profiler run --output /tmp/mcp-session-001.json -- your-server --your-server-option
+```
+
+The client connects to the profiler's stdin/stdout. Everything after `--` is the server executable and arguments, passed without a shell. This tool does not edit client configuration. Use absolute executable/report paths in client configuration and a fresh report path for each session. Existing files, symlinks and hardlinks are refused **before** starting the server.
+
+After the connection closes:
+
+```sh
+mcp-profiler summarize /tmp/mcp-session-001.json
+mcp-profiler html /tmp/mcp-session-001.json --output /tmp/mcp-session-001.html
+```
+
+`run` reserves stdout for protocol traffic. Server stderr is drained and discarded by default; its byte count is retained. `--forward-stderr` forwards raw text to runtime stderr and may expose secrets. Neither mode stores stderr text in report artifacts.
+
+## What the report means
+
+| Metric | Interpretation |
 | --- | --- |
-| Call frequency | Observed `tools/call` requests in the instrumented connection |
-| Response latency | Local elapsed time from an observed request to its matched response; includes transport and observer effects |
-| Errors | Distinct JSON-RPC errors, tool results marked `isError`, and transport/observation failures |
-| Response size | UTF-8 bytes of the response message at the observed boundary; not model context tokens |
-| A/B comparison | Differences between two user-labeled runs, with counts and limitations; not proof of causality |
+| Calls | Observed client `tools/call` requests; retained counts shown separately |
+| Latency | Monotonic elapsed time between complete request/response frames at the proxy, including transport and proxy effects |
+| Errors | Separate JSON-RPC errors and tool results with `isError: true` |
+| Response bytes | Complete response JSON frame bytes excluding its newline, including JSON structure |
+| Missing data | Unresolved/ambiguous calls, limits, malformed frames and incomplete sessions |
 
-Schema size, protocol traffic, token estimates, the model's actual context, and billing are different quantities. A stdio observer cannot establish what a client loaded into a model or what a provider charged. Any future token estimate must state its method and limitations. No precise cost or context savings are promised.
+Only matched calls enter latency statistics, with sample counts and nearest-rank median/p95. A result does not prove business success. **Transport bytes are not tokens, model context or billing.** Only the instrumented connection is visible.
 
-## Privacy and scope
+Correlation distinguishes number `1` from string `"1"`, separates client/server request origins, and handles out-of-order responses. Duplicate active IDs are quarantined until shutdown, without invented latency. JSON batches are forwarded but excluded from attribution. Malformed JSON, invalid UTF-8, oversized and truncated frames produce diagnostics.
 
-The planned default is local metadata only: tool name, typed request ID, timing, byte counts, outcome category, and correlation diagnostics. Tool names and IDs can themselves be sensitive. Argument/result bodies and raw diagnostic text are not planned default artifacts. The observer must parse messages transiently to classify them and measure size.
+Defaults: 1 MiB observation frame limit, 10,000 retained calls, 20,000 pending keys, 256-byte tool names/IDs, bounded relay queues. Adjust with `--max-frame-bytes`, `--max-calls` (1–10,000), `--max-pending`. Reports up to 64 MiB can be loaded. Oversized frames are still streamed when viable, with partial observation. Unclassifiable frames quarantine active calls and disable correlation for the rest of the session; earlier completed samples remain valid. Later recognized calls are unresolved. Pending-key exhaustion stops admission of new correlation keys for the rest of that session.
 
-The MVP will not automatically edit client configuration, disable tools, or send reports to a hosted service. Users will control configuration changes and any report sharing.
+After client input EOF the server gets 3 seconds to finish (`--shutdown-timeout`, 0.05–60 seconds). Increase this for slow calls. Interruption/forced shutdown cleans up the server process group. The proxy changes timing and cannot guarantee every client's shutdown behavior.
 
-## Why this project
+## Privacy
 
-Static tool-schema counting is already covered by projects such as [mcp-tokens](https://github.com/sd2k/mcp-tokens) and [mcp-token-audit](https://github.com/michaeltuszynski/mcp-token-audit). This project's proposed focus is metadata from an actual session, followed by a manual comparison.
+Reports retain tool names, typed request IDs, timings, bytes, numeric error codes, outcomes, platform/Python versions and fixed diagnostic categories. They exclude argument/result bodies, error messages/data, launch arguments, environment values and raw stderr. Messages are parsed transiently in memory. **Tool names and IDs can themselves be sensitive**; review reports before sharing. Files use mode `0600`. No telemetry or uploads.
 
-[Claude Code issue #29995](https://github.com/anthropics/claude-code/issues/29995) is a March 2026 user report that a diagnostic counted the full schemas of deferred tools. The research snapshot recorded it as **Closed as not planned**. That historical report does not establish whether a current client version has the same behavior; compatibility work must verify the selected version.
+## Validation and development
 
-## Planning documents
+[Validation evidence](docs/VALIDATION.md) records the official Python SDK workflow, exact versions and observed protocol. This does not establish Claude Code or Codex compatibility.
 
-- [MVP scope and measurement contract](docs/MVP.md)
-- [Milestones and acceptance criteria](ROADMAP.md)
-- [Contribution guidelines](CONTRIBUTING.md)
+```sh
+python -m unittest discover -s tests -v
+python -m pip install 'mcp==2.3.0'  # verification dependency only
+python examples/sdk_check.py --output /tmp/mcp-profiler-sdk-check.json
+```
 
-## License
+Exit codes: `0` completed with full observation and no unresolved/ambiguous retained calls; `1` server failed; `2` input/output/report failure; `3` transport/profiler failure; `4` partial observation or unresolved/ambiguous calls; `124` shutdown timeout; `130` interruption. Partial reports are finalized where possible; report-write failure is reported on stderr and returns `2`.
 
-MIT; see [LICENSE](LICENSE).
+HTTP/SSE, Windows, automatic client configuration, A/B comparison, token estimation and automatic tuning are outside v0.1. See [measurement contract](docs/MVP.md), [roadmap](ROADMAP.md), and [contributing](CONTRIBUTING.md).
+
+Static schema counting is covered by [mcp-tokens](https://github.com/sd2k/mcp-tokens) and [mcp-token-audit](https://github.com/michaeltuszynski/mcp-token-audit). This project focuses on an **actual session**. Historical [Claude Code issue #29995](https://github.com/anthropics/claude-code/issues/29995) informed the initial research; it is not evidence of current client behavior or savings.
+
+MIT — [LICENSE](LICENSE).

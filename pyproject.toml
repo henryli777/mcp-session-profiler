@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-session-profiler"
+version = "0.1.0"
+description = "Local metadata-only diagnostics for MCP stdio sessions"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "henryli777"}]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Debuggers",
+]
+
+[project.urls]
+Repository = "https://github.com/henryli777/mcp-session-profiler"
+Issues = "https://github.com/henryli777/mcp-session-profiler/issues"
+
+[project.scripts]
+mcp-profiler = "mcp_session_profiler.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

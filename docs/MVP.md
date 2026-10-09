@@ -1,102 +1,61 @@
-# MVP scope and measurement contract
+# v0.1 measurement contract
 
-**Status: Planning — no executable release yet.** This document is a proposed design and test plan. Examples describe intended behavior, not measured results or available commands.
+This executable alpha observes one client/server stdio connection on macOS or Linux. Python 3.11+ and the standard library are the runtime baseline. HTTP/SSE, Windows, A/B comparison, token estimation and automatic configuration remain future work.
 
-## Intended user and workflow
+## Inputs and persisted output
 
-The planned MVP serves developers who want to understand tool activity in one MCP session. It will target one explicitly documented client/version talking to one local server over stdio. The client/version is a compatibility decision for Milestone 1; no client compatibility has been established yet.
+`mcp-profiler run --output NEW_PATH -- EXECUTABLE [ARGUMENTS...]` starts one process without a shell. The server inherits the runtime environment, but its executable, arguments and environment values are never placed in reports. Input/output is newline-delimited UTF-8 JSON-RPC; relay bytes are not rewritten. Server stderr is a separate stream, counted and discarded by default. Optional `--forward-stderr` exposes raw text only at runtime.
 
-The user will manually configure the observer as the server launcher for that connection. The observer is planned to start the requested server process, forward both protocol streams, classify messages transiently, and write local metadata reports. The client remains responsible for its MCP behavior. The profiler will not edit configuration or make optimization decisions.
+JSON schema version 1 contains:
 
-## Planned inputs and outputs
-
-| Input | Planned contract |
+| Field | Contract |
 | --- | --- |
-| Server executable and arguments | Explicitly supplied by the user; preserve subprocess argument boundaries without a shell. Do not include them or environment values in default reports. |
-| One stdio connection | Newline-delimited UTF-8 JSON-RPC messages, with the selected MCP protocol/version documented. Server stderr is separate from protocol stdout. |
-| Output directory | Explicit local destination with a documented overwrite policy. No remote upload. |
-| Session/task/configuration labels | Optional user-supplied metadata. Warn in documentation that labels can reveal private details. |
-| A/B inputs | Two existing supported JSON reports selected by the user; configuration changes and reruns remain manual. |
+| `session` | Status, server exit code, duration, stderr bytes, Python version and platform |
+| `calls` | Bounded client tool-call records: sequence, tool, typed ID, origin, start offset, outcome, nullable latency/response bytes/error code |
+| `tool_calls_observed` | Recognized client tool-call request count; can exceed retained record count |
+| `diagnostics` | Fixed categories and nonnegative counts, no raw error text |
+| `coverage` | Observation completeness and configured limits |
+| `traffic` | Bytes and newline-completed frames per direction; bytes include newlines |
+| `summary` | Per-tool counts, matched latency sample counts/distributions, response bytes and errors from retained records |
 
-| Output | Planned contract |
+No request parameters, result bodies, error messages/data, commands, environment values or raw stderr are persisted. Tool names and IDs may still contain private information. Reports are local, with no upload. `html` renders validated JSON using escaped text, inline CSS, no JavaScript/external assets, and a restrictive CSP. `summarize` escapes tool names for terminal output. Loaded summaries are rebuilt from call records.
+
+The CLI retains at most 10,000 calls; the 64 MiB reader budget covers this bound even with escaped 256-byte tool names/IDs. Report files are exclusively created with mode 0600. Existing files and links are refused; no overwrite flag exists. Reserve the destination before server startup. A write failure returns exit code 2, and the reserved destination may remain incomplete. The user controls retention and deletion.
+
+## Metrics
+
+- **Frequency:** recognized client `tools/call` requests. Invalid/missing tool names do not receive invented names. Summaries distinguish observed and retained counts.
+- **Latency:** monotonic elapsed time from reading the complete request frame to reading a matching response frame. Includes transport, scheduling, server execution and proxy effects; not server CPU time or task duration.
+- **Size:** complete response frame bytes excluding LF, including JSON structure and any CR before LF. Never called token count or billing.
+- **Outcome:** `success` is a JSON-RPC result; `tool_error` is a result with boolean `isError: true`; `rpc_error` is a JSON-RPC error envelope. These signals do not cover every application-level failure.
+- **Statistics:** only matched calls contribute latency/response bytes. Nearest-rank quantiles use sorted value at `ceil(n*p)`, with n displayed. Unresolved and ambiguous calls have no matched metrics.
+
+The observer parses transiently. Unobserved connections, hidden retries, actual model prompts, provider invoices and exact context are outside its visibility. Overhead is not guaranteed or subtracted from timings. The compatibility record is a protocol workflow, not proof of diagnosis value from independent users.
+
+## Correlation and bounds
+
+Correlation key = request origin + ID type + ID value. MCP IDs are strings or integers; booleans/null/floats are ineligible. Numeric `1` differs from string `"1"`. Server reverse requests cannot match client tool calls. Requests may complete out of order. Completed IDs may be reused when no ambiguity exists. Notifications/cancellation alone do not complete a request.
+
+Duplicate active keys quarantine all related calls until shutdown. No arbitrary response assignment. Pending-key exhaustion stops new correlation admission for that session, preserving existing keys. Malformed, unsupported or unobserved frames can hide IDs; an unclassifiable frame quarantines all active calls and permanently disables new correlation for the session. Earlier completed samples stay valid; later recognized calls are unresolved. Orphan responses have no invented tool attribution.
+
+Defaults: 1 MiB per observation frame, 10,000 retained calls, 20,000 pending keys, 256 UTF-8 bytes per tool name/string ID or decimal numeric ID. Each relay queue is at most 256 KiB, reads at most 64 KiB. OS pipe buffers and transient JSON objects add memory; these are bounds on retained data/queues, not an exact RSS guarantee. Oversized frames stream through when viable, but are excluded from observation; recovery starts at LF. Batches are forwarded without flattening and excluded from attribution. Truncated tails are not treated as completed frames.
+
+## Lifecycle and exit codes
+
+The proxy uses a POSIX process group. Client EOF starts a configurable shutdown grace (default 3 seconds). Child exit/stdout EOF, broken pipes, interruption and observer failures also trigger bounded shutdown. Server stderr EOF alone does not end an active connection. Connected idle sessions have no arbitrary idle deadline. Slow or blocked streams can exceed shutdown grace: the report records timeout/partial observation, and bytes still queued may not be delivered. Children deliberately leaving the process group are outside cleanup. Forced cleanup can add a 250 ms reap wait.
+
+| Code | Meaning |
 | --- | --- |
-| Session JSON | A versioned metadata schema with environment compatibility fields, session status, per-call records, summaries, and observation diagnostics. No raw messages, argument/result bodies, executable arguments, environment values, or stderr text by default. |
-| Session HTML | A local offline rendering of the same metadata. Escape all untrusted text and avoid external assets. |
-| Comparison JSON/HTML | Absolute and relative differences where meaningful, sample counts, input labels, compatibility warnings, and missing-data markers. Zero denominators are displayed as undefined, not infinite savings. |
-| Runtime diagnostics | Profiler messages on stderr, keeping stdout reserved for forwarded protocol. Planned diagnostics use categories and counts rather than raw payloads. |
+| 0 | Completed server, complete observation, no unresolved/ambiguous retained calls |
+| 1 | Server failed |
+| 2 | Invalid input/output or report failure |
+| 3 | Transport/profiler failure |
+| 4 | Partial observation or unresolved/ambiguous calls |
+| 124 | Shutdown timeout |
+| 130 | Interrupted |
 
-Illustrative artifact names are `session.json`, `session.html`, and `comparison.html`; these are a design sketch, not files generated by this repository.
+A complete observation can contain unresolved requests: it means received frames were classified, not that every call completed. Session status, call status and observation coverage must be read together. Partial reports are saved where possible; SIGKILL or a failed filesystem cannot guarantee an artifact.
 
-## Planned measurements
+## Validation
 
-- **Frequency:** count client-to-server `tools/call` requests, grouped by the tool name in `params.name`. Record invalid/missing names as diagnostics rather than making up a name.
-- **Latency:** use a monotonic clock from the completed request frame observed at the proxy boundary to the completed matching response frame. This is local elapsed response time, including transport, scheduling, and proxy effects. It is not server CPU time, model inference time, or total task duration.
-- **Size:** measure the complete response frame's UTF-8 bytes, excluding its transport newline, before discarding its body. Report this as `response_message_bytes`; it includes JSON structure and does not claim to measure just the semantic content or model input. Oversized frames must be marked as unclassified/limited where they cannot be parsed safely.
-- **Outcome:** separate JSON-RPC `error`, a valid tool result with `isError: true`, ordinary completed results, and unresolved/ambiguous calls. Transport and observer failures are separate session diagnostics. A completed result without `isError` does not prove business success.
-- **Summary:** planned per-tool counts, error counts, response bytes, and latency distributions for matched calls only. Include sample counts and the documented quantile method; small samples remain visibly small.
-
-The planned observer will discard parameter and result bodies after transient classification. Tool names, typed IDs, timestamps, outcomes, sizes, and labels are still metadata that may be sensitive. JSON-RPC error messages and error `data` will not be stored by default; a numeric error code may be retained. Detailed capture is outside this MVP.
-
-## Planned module boundaries
-
-1. **CLI and session configuration:** validate explicit inputs, choose local outputs, and record non-sensitive compatibility metadata.
-2. **Transport and process supervisor:** relay both streams, preserve protocol bytes, keep server stderr separate, apply resource limits, and handle shutdown.
-3. **Frame classifier and correlator:** parse transient messages, recognize requests/responses/notifications, and track typed IDs and unresolved states.
-4. **Metadata collector:** retain bounded records and compute observed counts, durations, outcomes, and byte measurements.
-5. **Report writer:** serialize the versioned JSON and render escaped offline HTML from the same data.
-6. **Comparator:** validate two report schemas and expose differences with input limitations.
-
-Python 3.11+ and the standard library are the planned starting point. Dependency additions need a concrete requirement; the planning repository has no runtime package or dependency installation step.
-
-## JSON-RPC correlation and lifecycle boundaries
-
-The planned correlation key includes request origin/direction and ID type/value. String `"1"` and number `1` are distinct. Only valid request IDs under the selected protocol are eligible; missing or invalid IDs are diagnostic data. Track server-initiated requests separately so they cannot match client tool calls accidentally.
-
-| Case | Planned handling |
-| --- | --- |
-| Responses complete out of order | Match by typed ID and origin, not stream position. |
-| Notifications | Forward unchanged; no pending request or response latency. Cancellation notifications may be counted but do not by themselves prove a request completed. |
-| Batch/array messages | Verify the selected MCP version's rules. MVP plans no batch attribution: forward the original frame when transport remains viable, flag it as unsupported, and exclude it from per-call metrics. Never silently flatten arrays. |
-| Unmatched response | Record an orphan-response diagnostic and byte count without inventing a tool association or latency. |
-| Duplicate in-flight request ID | Mark the affected correlation ambiguous; do not overwrite the first request or assign a response arbitrarily. Reuse after a completed request may be valid. |
-| Missing response or cancellation | Keep the call unresolved unless a valid matching response arrives; exclude it from completed-call latency. |
-| Malformed JSON or invalid message shape | Forward original bytes where feasible, retain a diagnostic category/count, and avoid recording raw text or inferred tool metrics. |
-| Server stdout contains logging | Treat non-protocol frames as observation/protocol diagnostics; do not convert them into tool events. |
-| Server stderr | Keep it separate from protocol stdout. Route it to runtime stderr with a clear source policy; do not retain raw text in default report artifacts. |
-| Server exit, EOF, broken pipe, or interrupted session | Stop or close affected streams safely, finalize a partial report where possible, and mark outstanding calls unresolved. Record server exit category/code without payloads. |
-| Observer parsing/buffer limit | Forward only under the documented safe relay policy, mark lost measurement coverage, and stop safely when forwarding cannot remain correct. Never report complete coverage after dropping observations. |
-
-The exit-code contract is planned to distinguish normal completion, server failure, interruption, and profiler failure. A zero server exit alone must not make an incomplete observation successful. If report writing fails, the CLI must expose that failure and must not claim a report exists. The precise numeric mapping will be documented during implementation.
-
-## Manual A/B contract
-
-The user chooses two configurations and performs the task in each. The planned comparator will show labels, client/protocol compatibility, session status, call counts, matched latency sample counts, response bytes, and categorized errors before showing deltas.
-
-Reports cannot verify that task difficulty, model behavior, server state, network conditions, caches, or tool results were equivalent. Single-run comparisons are descriptive. Lower response bytes do not demonstrate lower model context or lower bills, and a faster observed response does not establish that a configuration caused it.
-
-## Observability limits
-
-- Only the instrumented connection is visible. Other servers, built-in client tools, hidden retries, and work outside that connection may be absent.
-- Observed `tools/list` schemas do not establish which definitions a client loaded into model context. Deferred loading is a client behavior requiring separate evidence.
-- The protocol does not expose a provider invoice or the model's exact prompt. Transport bytes are not tokens. Optional future token estimates require a named estimator and must remain estimates.
-- The proxy can perturb timing. Its overhead must be measured and reported for a defined fixture; no overhead guarantee exists at planning time.
-- JSON-RPC success and a tool's `isError` field provide limited error signals. They do not capture every application-level failure.
-- The metadata format must record truncation, observation loss, unsupported messages, and incomplete sessions so a neat chart cannot hide missing coverage.
-
-## Planned test and validation work
-
-Use synthetic data and a deterministic local MCP server fixture before collecting any user session. No tests have been implemented or executed in this planning repository.
-
-| Area | Planned checks |
-| --- | --- |
-| Relay correctness | Byte-preserving forwarding in both directions, initialization, stderr separation, backpressure, Unicode byte sizes, and bounded memory under large frames. |
-| Correlation | Typed IDs, overlapping client/server IDs, out-of-order replies, notifications, duplicate IDs, orphan replies, cancellations, and unsupported arrays. |
-| Failures | Invalid JSON, logging on stdout, response truncation, subprocess nonzero exit, EOF/broken pipe, interruption, limit exhaustion, and report-write failure. |
-| Metrics | Known fixture counts/outcomes/bytes; deterministic clock injection for elapsed time and quantiles; unresolved calls excluded from completed latency. |
-| Privacy | Scan JSON/HTML/diagnostics using fixture secrets in arguments, results, errors, stderr, executable arguments, and environment values; verify default artifacts exclude their bodies. |
-| Reports and comparisons | JSON schema/version validation, JSON/HTML agreement, HTML escaping and offline rendering, empty sessions, missing metrics, zero denominators, incompatible reports, and unequal samples. |
-| Compatibility and overhead | Record the chosen client/server/protocol/OS/Python versions; run a reproducible workflow directly and through the observer, then publish the method and measurements. |
-
-## Non-goals
-
-The MVP excludes HTTP/SSE transport, a universal client integration, hosted telemetry, configuration edits, tool disabling, prompt/result-body archives, model-context reconstruction, exact billing attribution, automatic performance tuning, statistical A/B significance, and static schema counting as a standalone replacement for existing tools.
+The tests cover byte preservation, split Unicode, large frames/backpressure, typed/origin IDs, out-of-order/reused/duplicate IDs, observation limits, invalid frames, privacy sentinels, exclusive output, HTML escaping, EOF/exit/interrupt and descendant cleanup. [VALIDATION.md](VALIDATION.md) records actual official SDK versions/protocol. CLI install, local demo and SDK check can be rerun from README commands. A/B comparisons and independent user trials remain follow-up work.

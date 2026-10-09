@@ -1,0 +1,37 @@
+{
+  "sdk_distribution": "mcp",
+  "sdk_version": "2.3.0",
+  "mcp_types_version": "2.3.0",
+  "python_version": "3.13.7",
+  "platform": "Darwin",
+  "os_version": "27.0.1",
+  "workflow": "ClientSession.initialize / list_tools / call_tool",
+  "server": "MCPServer",
+  "sdk_latest_known_protocol": "2026-07-28",
+  "negotiated_protocol": "2025-11-25",
+  "unicode_preserved": true,
+  "coverage_complete": true,
+  "session_status": "completed",
+  "server_exit_code": 0,
+  "tool_calls_observed": 3,
+  "calls": [
+    {
+      "tool": "fast_echo",
+      "status": "success",
+      "latency_ms": 6.808625010307878,
+      "response_message_bytes": 148
+    },
+    {
+      "tool": "slow_echo",
+      "status": "success",
+      "latency_ms": 38.92520899535157,
+      "response_message_bytes": 144
+    },
+    {
+      "tool": "failing_tool",
+      "status": "tool_error",
+      "latency_ms": 2.143959005479701,
+      "response_message_bytes": 170
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+Fixture protocol negotiated: 2025-11-25
+Session: completed | observation: complete
+Tool calls observed: 4 | retained: 4
+Tool (JSON escaped) | Calls | Matched | Errors | Unresolved/ambiguous | p95 ms | Response bytes
+"failing_tool" | 1 | 1 | 1 | 0/0 | 0.31 (n=1) | 158
+"fast_echo" | 1 | 1 | 0 | 0/0 | 0.15 (n=1) | 148
+"slow_echo" | 1 | 1 | 0 | 0/0 | 32.20 (n=1) | 144
+"unknown_tool" | 1 | 1 | 1 | 0/0 | 0.19 (n=1) | 96
+Transport bytes are not model tokens or billing. Latency includes proxy and transport effects.
+Diagnostics: {"stderr_not_forwarded": 64}
+JSON: showcases/local-fixture/session.json
+HTML: showcases/local-fixture/report.html
